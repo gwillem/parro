@@ -1,0 +1,10 @@
+# Private data — mitmproxy captures contain tokens and personal info
+flows.mitm
+flows_parsed.txt
+extract_flows.py
+
+# Claude Code local state
+.claude/
+
+# Binaries
+/parro
