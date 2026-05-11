@@ -127,65 +127,24 @@ func Login(email, password string, logger *log.Logger) (*TokenResponse, error) {
 	}
 
 	location := resp.Header.Get("Location")
-	if !strings.Contains(location, "wicket/page") {
-		return nil, fmt.Errorf("login failed: unexpected redirect to %s", location)
-	}
 
-	// Follow the redirect to load the account selection page first
-	// (Wicket requires the page to be loaded before AJAX calls work)
-	pageURL := location
-	if !strings.HasPrefix(pageURL, "http") {
-		pageURL = idpBase + "/idp/" + strings.TrimPrefix(location, "/idp/")
-	}
-
-	resp, err = doGet(client, pageURL)
-	if err != nil {
-		return nil, fmt.Errorf("account page: %w", err)
-	}
-	resp.Body.Close()
-
-	// Step 4: Select account (first account = index 1)
-	logf("step 4: selecting account")
-	// Wicket AJAX pattern: page?<N>-1.0-accountKeuze-accounts-account-1
-	// Use a no-redirect client so we can read the AJAX XML response
-	accountURL := fmt.Sprintf("%s-1.0-accountKeuze-accounts-account-1&_=%d", pageURL, time.Now().UnixMilli())
-
-	req, err = http.NewRequest(http.MethodGet, accountURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
-	req.Header.Set("User-Agent", userAgent)
-
-	noRedirectClient := &http.Client{
-		Jar: jar,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
-	resp, err = noRedirectClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("account selection: %w", err)
-	}
-	body, err = io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return nil, fmt.Errorf("read account selection: %w", err)
-	}
-
-	// Step 5: Extract auth code from response
-	logf("step 5: extracting auth code (status %d)", resp.StatusCode)
-	// Could be AJAX XML: <ajax-response><redirect><![CDATA[parro://oauth2:443/?code=...]]>
-	// Or a 302 redirect with the code in the Location header
-	code := ""
-	if resp.StatusCode == http.StatusFound {
-		code, err = extractAuthCode(resp.Header.Get("Location"))
+	// The IdP can take two paths after successful login:
+	// A) Single-account guardian: direct redirect to parro://oauth2:443/?code=...
+	// B) Multi-account guardian: redirect to /wicket/page?<N> for account selection
+	var code string
+	if strings.HasPrefix(location, "parro://") {
+		code, err = extractAuthCode(location)
+		if err != nil {
+			return nil, fmt.Errorf("login failed: parro:// redirect without code: %s", location)
+		}
+		logf("step 4-5: skipped (single-account guardian, code received in redirect)")
+	} else if strings.Contains(location, "wicket/page") {
+		code, err = selectAccountAndGetCode(client, jar, location, logf)
+		if err != nil {
+			return nil, err
+		}
 	} else {
-		code, err = extractAuthCode(string(body))
-	}
-	if err != nil {
-		return nil, fmt.Errorf("%w (status %d, body: %s)", err, resp.StatusCode, string(body[:min(len(body), 500)]))
+		return nil, fmt.Errorf("login failed: unexpected redirect to %s", location)
 	}
 
 	// Step 6: Exchange code for tokens
@@ -218,6 +177,76 @@ func Login(email, password string, logger *log.Logger) (*TokenResponse, error) {
 		return nil, fmt.Errorf("decode token: %w", err)
 	}
 	return &tok, nil
+}
+
+
+// selectAccountAndGetCode performs the Wicket-based account-selection flow
+// for guardians with multiple accounts. It loads the account-selection page,
+// triggers the AJAX request to select the first account, and extracts the
+// auth code from the resulting redirect (Location header or AJAX XML body).
+func selectAccountAndGetCode(
+	client *http.Client,
+	jar http.CookieJar,
+	location string,
+	logf func(format string, args ...any),
+) (string, error) {
+	// Follow the redirect to load the account selection page first
+	// (Wicket requires the page to be loaded before AJAX calls work).
+	pageURL := location
+	if !strings.HasPrefix(pageURL, "http") {
+		pageURL = idpBase + "/idp/" + strings.TrimPrefix(location, "/idp/")
+	}
+
+	resp, err := doGet(client, pageURL)
+	if err != nil {
+		return "", fmt.Errorf("account page: %w", err)
+	}
+	resp.Body.Close()
+
+	// Step 4: Select account (first account = index 1)
+	logf("step 4: selecting account")
+	// Wicket AJAX pattern: page?<N>-1.0-accountKeuze-accounts-account-1
+	accountURL := fmt.Sprintf("%s-1.0-accountKeuze-accounts-account-1&_=%d", pageURL, time.Now().UnixMilli())
+
+	req, err := http.NewRequest(http.MethodGet, accountURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/xml, text/xml, */*; q=0.01")
+	req.Header.Set("User-Agent", userAgent)
+
+	// Use a no-redirect client so we can read the AJAX XML response
+	noRedirectClient := &http.Client{
+		Jar: jar,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resp, err = noRedirectClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("account selection: %w", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return "", fmt.Errorf("read account selection: %w", err)
+	}
+
+	// Step 5: Extract auth code from response.
+	// Could be AJAX XML: <ajax-response><redirect><![CDATA[parro://oauth2:443/?code=...]]>
+	// Or a 302 redirect with the code in the Location header.
+	logf("step 5: extracting auth code (status %d)", resp.StatusCode)
+	var code string
+	if resp.StatusCode == http.StatusFound {
+		code, err = extractAuthCode(resp.Header.Get("Location"))
+	} else {
+		code, err = extractAuthCode(string(body))
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w (status %d, body: %s)", err, resp.StatusCode, string(body[:min(len(body), 500)]))
+	}
+	return code, nil
 }
 
 func doGet(client *http.Client, url string) (*http.Response, error) {
