@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,7 +68,9 @@ type loginCmd struct {
 	} `positional-args:"yes"`
 }
 
-type checkCmd struct{}
+type checkCmd struct {
+	Since string `short:"s" long:"since" description:"Show items from last <N>{s,m,h,d} (e.g. 2h, 7d)"`
+}
 
 type resetCmd struct{}
 
@@ -354,23 +357,42 @@ func (cmd *checkCmd) Execute(args []string) error {
 		log.Printf("warn: save last_sync: %v", err)
 	}
 
-	// First run: silent seed — don't print anything
-	if firstRun {
-		log.Println("Initial sync complete. Run 'check' again to see new items.")
-		if verbosity() >= 2 {
-			return printLatestSummary(store, activeRoomIDs)
-		}
-		return nil
-	}
+	// Determine display cutoff
+	var newEvents []db.Event
+	var newMsgs []db.ChatMessage
 
-	// Print new items
-	newEvents, err := store.GetNewEvents(lastSync)
-	if err != nil {
-		return fmt.Errorf("query new events: %w", err)
-	}
-	newMsgs, err := store.GetNewChatMessages(lastSync)
-	if err != nil {
-		return fmt.Errorf("query new messages: %w", err)
+	if cmd.Since != "" {
+		delta, err := parseDelta(cmd.Since)
+		if err != nil {
+			return err
+		}
+		displaySince := time.Now().Add(-delta).UTC().Format(time.RFC3339)
+		newEvents, err = store.GetEventsSince(displaySince)
+		if err != nil {
+			return fmt.Errorf("query events since %s: %w", cmd.Since, err)
+		}
+		newMsgs, err = store.GetChatMessagesSince(displaySince)
+		if err != nil {
+			return fmt.Errorf("query messages since %s: %w", cmd.Since, err)
+		}
+	} else {
+		// First run without --since: silent seed
+		if firstRun {
+			log.Println("Initial sync complete. Run 'check' again to see new items.")
+			if verbosity() >= 2 {
+				return printLatestSummary(store, activeRoomIDs)
+			}
+			return nil
+		}
+
+		newEvents, err = store.GetNewEvents(lastSync)
+		if err != nil {
+			return fmt.Errorf("query new events: %w", err)
+		}
+		newMsgs, err = store.GetNewChatMessages(lastSync)
+		if err != nil {
+			return fmt.Errorf("query new messages: %w", err)
+		}
 	}
 
 	if len(newEvents) == 0 && len(newMsgs) == 0 {
@@ -391,30 +413,9 @@ func (cmd *checkCmd) Execute(args []string) error {
 		}
 	}
 
-	if len(announcements) > 0 {
-		fmt.Println("=== New Announcements ===")
-		for _, a := range announcements {
-			fmt.Printf("\n[%s] [%s] %s (by %s)\n%s\n", a.SortDate, a.GroupName, a.Title, a.AuthorName, a.Contents)
-		}
-	}
-
-	if len(calendar) > 0 {
-		fmt.Println("\n=== Upcoming Calendar Events ===")
-		for _, e := range calendar {
-			title := e.Title
-			if title == "" {
-				title = "(calendar item)"
-			}
-			fmt.Printf("\n[%s] %s\n", e.SortDate, title)
-		}
-	}
-
-	if len(newMsgs) > 0 {
-		fmt.Println("\n=== New Chat Messages ===")
-		for _, m := range newMsgs {
-			fmt.Printf("\n[%s] [%s] %s: %s\n", m.SentAt, m.ChatroomName, m.SenderName, m.Contents)
-		}
-	}
+	printAnnouncements(announcements)
+	printCalendar(calendar)
+	printChatMessages(newMsgs)
 
 	if verbosity() >= 2 {
 		if err := printLatestSummary(store, activeRoomIDs); err != nil {
@@ -443,19 +444,96 @@ func printLatestSummary(store *db.Store, activeRoomIDs map[int64]bool) error {
 		}
 	}
 
-	if len(anns) > 0 {
-		fmt.Println("\n=== Latest Announcement Per Group ===")
-		for _, a := range anns {
-			fmt.Printf("\n[%s] [%s] %s (by %s)\n%s\n", a.SortDate, a.GroupName, a.Title, a.AuthorName, a.Contents)
-		}
-	}
-	if len(msgs) > 0 {
-		fmt.Println("\n=== Latest Chat Message Per Room ===")
-		for _, m := range msgs {
-			fmt.Printf("\n[%s] [%s] %s: %s\n", m.SentAt, m.ChatroomName, m.SenderName, m.Contents)
-		}
-	}
+	printAnnouncements(anns)
+	printChatMessages(msgs)
 	return nil
+}
+
+// shortTime formats an ISO8601 timestamp as "2006-01-02 15:04".
+func shortTime(iso string) string {
+	if t, err := time.Parse(time.RFC3339, iso); err == nil {
+		return t.Format("2006-01-02 15:04")
+	}
+	// Try with fractional seconds
+	if t, err := time.Parse("2006-01-02T15:04:05.999999999Z07:00", iso); err == nil {
+		return t.Format("2006-01-02 15:04")
+	}
+	return iso
+}
+
+func printAnnouncements(events []db.Event) {
+	if len(events) == 0 {
+		return
+	}
+	// Group by group name
+	type group struct {
+		name   string
+		events []db.Event
+	}
+	var groups []group
+	seen := map[string]int{}
+	for _, e := range events {
+		name := e.GroupName
+		if name == "" {
+			name = "School"
+		}
+		if idx, ok := seen[name]; ok {
+			groups[idx].events = append(groups[idx].events, e)
+		} else {
+			seen[name] = len(groups)
+			groups = append(groups, group{name: name, events: []db.Event{e}})
+		}
+	}
+	for _, g := range groups {
+		fmt.Printf("\n==== %s ====\n", g.name)
+		for _, a := range g.events {
+			fmt.Printf("%s <%s> %s\n", shortTime(a.SortDate), a.AuthorName, a.Title)
+			if a.Contents != "" {
+				fmt.Printf("%s\n", a.Contents)
+			}
+		}
+	}
+}
+
+func printCalendar(events []db.Event) {
+	if len(events) == 0 {
+		return
+	}
+	fmt.Printf("\n==== Agenda ====\n")
+	for _, e := range events {
+		title := e.Title
+		if title == "" {
+			title = "(agenda-item)"
+		}
+		fmt.Printf("%s %s\n", shortTime(e.SortDate), title)
+	}
+}
+
+func printChatMessages(msgs []db.ChatMessage) {
+	if len(msgs) == 0 {
+		return
+	}
+	// Group by chatroom, preserving order of first appearance
+	type room struct {
+		name string
+		msgs []db.ChatMessage
+	}
+	var rooms []room
+	seen := map[int64]int{}
+	for _, m := range msgs {
+		if idx, ok := seen[m.ChatroomID]; ok {
+			rooms[idx].msgs = append(rooms[idx].msgs, m)
+		} else {
+			seen[m.ChatroomID] = len(rooms)
+			rooms = append(rooms, room{name: m.ChatroomName, msgs: []db.ChatMessage{m}})
+		}
+	}
+	for _, r := range rooms {
+		fmt.Printf("\n==== %s ====\n", r.name)
+		for _, m := range r.msgs {
+			fmt.Printf("%s <%s> %s\n", shortTime(m.SentAt), m.SenderName, m.Contents)
+		}
+	}
 }
 
 // attachmentPath returns the destination path for a downloaded attachment.
@@ -471,6 +549,30 @@ func attachmentPath(dir string, msgID int64, entry *api.AttachmentEntry) string 
 		filename = "file"
 	}
 	return filepath.Join(dir, fmt.Sprintf("%d_%s", msgID, filename))
+}
+
+// parseDelta parses a delta string like "30s", "5m", "2h", "7d" into a time.Duration.
+func parseDelta(s string) (time.Duration, error) {
+	if len(s) < 2 {
+		return 0, fmt.Errorf("invalid delta %q: must be <int>{s,m,h,d}", s)
+	}
+	unit := s[len(s)-1]
+	n, err := strconv.Atoi(s[:len(s)-1])
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid delta %q: must be <int>{s,m,h,d}", s)
+	}
+	switch unit {
+	case 's':
+		return time.Duration(n) * time.Second, nil
+	case 'm':
+		return time.Duration(n) * time.Minute, nil
+	case 'h':
+		return time.Duration(n) * time.Hour, nil
+	case 'd':
+		return time.Duration(n) * 24 * time.Hour, nil
+	default:
+		return 0, fmt.Errorf("invalid delta %q: unit must be s, m, h, or d", s)
+	}
 }
 
 var opts options

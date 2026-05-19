@@ -237,6 +237,50 @@ func (s *Store) GetNewEvents(since string) ([]Event, error) {
 	return events, rows.Err()
 }
 
+// GetEventsSince returns events with sort_date after the given timestamp.
+func (s *Store) GetEventsSince(since string) ([]Event, error) {
+	rows, err := s.db.Query(
+		"SELECT id, dtype, title, contents, sort_date, group_id, group_name, author_name, synced_at FROM events WHERE sort_date > ? ORDER BY sort_date",
+		since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(&e.ID, &e.DType, &e.Title, &e.Contents, &e.SortDate, &e.GroupID, &e.GroupName, &e.AuthorName, &e.SyncedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+// GetChatMessagesSince returns chat messages with sent_at after the given timestamp.
+func (s *Store) GetChatMessagesSince(since string) ([]ChatMessage, error) {
+	rows, err := s.db.Query(
+		"SELECT id, chatroom_id, chatroom_name, sender_name, contents, sent_at, synced_at FROM chat_messages WHERE sent_at > ? ORDER BY sent_at",
+		since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []ChatMessage
+	for rows.Next() {
+		var m ChatMessage
+		if err := rows.Scan(&m.ID, &m.ChatroomID, &m.ChatroomName, &m.SenderName, &m.Contents, &m.SentAt, &m.SyncedAt); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+}
+
 // GetNewChatMessages returns chat messages synced after the given timestamp.
 func (s *Store) GetNewChatMessages(since string) ([]ChatMessage, error) {
 	rows, err := s.db.Query(
