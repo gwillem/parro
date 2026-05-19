@@ -186,6 +186,41 @@ func TestGetChatMessages(t *testing.T) {
 	}
 }
 
+func TestGetCalendarEventDetail(t *testing.T) {
+	detail := CalendarEventDetail{
+		DType:    "event.RCalendarItemEvent",
+		Links:    []Link{{ID: 4242, Rel: "self"}},
+		SortDate: "2026-05-20T09:00:00+02:00",
+	}
+	detail.CalendarItem.Title = "Studiedag"
+	detail.CalendarItem.Type = "STUDY_DAY"
+	detail.CalendarItem.StartDate = "2026-05-20"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertHeaders(t, r)
+		if r.URL.Path != "/rest/v2/event/4242" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("dtype"); got != "event.RCalendarItemEvent" {
+			t.Fatalf("dtype = %q", got)
+		}
+		json.NewEncoder(w).Encode(detail)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	got, err := c.GetCalendarEventDetail(4242)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CalendarItem.Title != "Studiedag" {
+		t.Fatalf("title = %q, want Studiedag", got.CalendarItem.Title)
+	}
+	if got.CalendarItem.Type != "STUDY_DAY" {
+		t.Fatalf("type = %q", got.CalendarItem.Type)
+	}
+}
+
 func newTestClient(srv *httptest.Server) *Client {
 	return &Client{
 		GuardianID:  "123",

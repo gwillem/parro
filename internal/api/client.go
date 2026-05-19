@@ -161,6 +161,15 @@ func (c *Client) GetCalendarEvents(since string) ([]CalendarEvent, error) {
 	return getList[CalendarEvent](c, "/event?dtype=event.RCalendarItemEventPrimer&sort=desc-stream&sortDateSince="+url.QueryEscape(since))
 }
 
+// GetCalendarEventDetail fetches the full detail for a calendar event.
+func (c *Client) GetCalendarEventDetail(eventID int64) (*CalendarEventDetail, error) {
+	var detail CalendarEventDetail
+	if err := c.do(http.MethodGet, fmt.Sprintf("/event/%d?dtype=event.RCalendarItemEvent", eventID), &detail); err != nil {
+		return nil, err
+	}
+	return &detail, nil
+}
+
 // GetChatRooms fetches active chatrooms.
 func (c *Client) GetChatRooms() ([]ChatRoom, error) {
 	return getList[ChatRoom](c, "/chatroom")

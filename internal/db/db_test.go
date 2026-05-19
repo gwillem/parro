@@ -81,6 +81,59 @@ func TestUpsertEventDedup(t *testing.T) {
 	}
 }
 
+func TestHasEventTitle(t *testing.T) {
+	store, err := Open(":memory:", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	store.UpsertEvent(Event{ID: 1, DType: "event.RCalendarItemEventPrimer", Title: "", SortDate: "2026-03-01T10:00:00+01:00", RawJSON: "{}"})
+	store.UpsertEvent(Event{ID: 2, DType: "event.RCalendarItemEventPrimer", Title: "Studiedag", SortDate: "2026-03-02T10:00:00+01:00", RawJSON: "{}"})
+
+	if store.HasEventTitle(1) {
+		t.Error("HasEventTitle(1) = true, want false (empty title)")
+	}
+	if !store.HasEventTitle(2) {
+		t.Error("HasEventTitle(2) = false, want true")
+	}
+	if store.HasEventTitle(999) {
+		t.Error("HasEventTitle(999) = true, want false (missing row)")
+	}
+}
+
+func TestUpsertEventBackfillTitle(t *testing.T) {
+	store, err := Open(":memory:", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// First insert: no title yet (calendar list endpoint omits it).
+	inserted, err := store.UpsertEvent(Event{ID: 7, DType: "event.RCalendarItemEventPrimer", Title: "", SortDate: "2026-03-01T10:00:00+01:00", RawJSON: `{"v":1}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inserted {
+		t.Fatal("first upsert should report inserted=true")
+	}
+	if store.HasEventTitle(7) {
+		t.Fatal("title should still be empty after first insert")
+	}
+
+	// Second upsert with a title: should backfill via the UPDATE branch.
+	inserted, err = store.UpsertEvent(Event{ID: 7, DType: "event.RCalendarItemEventPrimer", Title: "Schoolreis", SortDate: "2026-03-01T10:00:00+01:00", RawJSON: `{"v":2}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted {
+		t.Fatal("second upsert should report inserted=false (already existed)")
+	}
+	if !store.HasEventTitle(7) {
+		t.Fatal("title should be backfilled after second upsert")
+	}
+}
+
 func TestUpsertChatMessageDedup(t *testing.T) {
 	store, err := Open(":memory:", nil)
 	if err != nil {
