@@ -90,9 +90,9 @@ func Login(email, password string, logger *log.Logger) (*TokenResponse, error) {
 	// Step 3: POST credentials
 	logf("step 3: POST credentials to %s", formURL)
 	formData := url.Values{
-		"aanmelden":    {"x"},
-		"e-mailadres":  {email},
-		"wachtwoord":   {password},
+		"aanmelden":   {"x"},
+		"e-mailadres": {email},
+		"wachtwoord":  {password},
 	}
 	req, err := http.NewRequest(http.MethodPost, formURL, strings.NewReader(formData.Encode()))
 	if err != nil {
@@ -135,7 +135,7 @@ func Login(email, password string, logger *log.Logger) (*TokenResponse, error) {
 	if strings.HasPrefix(location, "parro://") {
 		code, err = extractAuthCode(location)
 		if err != nil {
-			return nil, fmt.Errorf("login failed: parro:// redirect without code: %s", location)
+			return nil, fmt.Errorf("login failed: parro:// redirect without code (%w): %s", err, location)
 		}
 		logf("step 4-5: skipped (single-account guardian, code received in redirect)")
 	} else if strings.Contains(location, "wicket/page") {
@@ -178,7 +178,6 @@ func Login(email, password string, logger *log.Logger) (*TokenResponse, error) {
 	}
 	return &tok, nil
 }
-
 
 // selectAccountAndGetCode performs the Wicket-based account-selection flow
 // for guardians with multiple accounts. It loads the account-selection page,
@@ -283,7 +282,9 @@ func extractFormAction(html string) (string, error) {
 	return action, nil
 }
 
-var codeRe = regexp.MustCompile(`parro://oauth2[^?]*\?code=([^&]+)`)
+// Auth codes are JWT-shaped (base64url + dots); stop at the first character
+// that can't appear in one — query separator, CDATA close, whitespace, quote, etc.
+var codeRe = regexp.MustCompile(`parro://oauth2[^?]*\?code=([^&\]\s"'<#]+)`)
 
 func extractAuthCode(xmlBody string) (string, error) {
 	m := codeRe.FindStringSubmatch(xmlBody)
