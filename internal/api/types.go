@@ -84,6 +84,26 @@ type CalendarEvent struct {
 	} `json:"children,omitempty"`
 }
 
+// CalendarEventDetail is the full calendar event (fetched per-item).
+type CalendarEventDetail struct {
+	DType        string `json:"dtype"`
+	Links        []Link `json:"links"`
+	SortDate     string `json:"sortDate"`
+	Cancelled    bool   `json:"cancelled"`
+	CalendarItem struct {
+		Title     string `json:"title"`
+		Type      string `json:"type"`
+		StartDate string `json:"startDate"`
+		EndDate   string `json:"endDate"`
+	} `json:"calendarItem"`
+	Children []struct {
+		Child struct {
+			Firstname string `json:"firstname"`
+			Surname   string `json:"surname"`
+		} `json:"child"`
+	} `json:"children,omitempty"`
+}
+
 // ChatRoom represents a chatroom.
 type ChatRoom struct {
 	DType          string `json:"dtype"`

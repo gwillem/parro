@@ -145,7 +145,20 @@ func (s *Store) UpsertEvent(e Event) (inserted bool, err error) {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
+	if n == 0 && e.Title != "" {
+		// Row already existed — backfill title if we now have one
+		if _, err := s.db.Exec("UPDATE events SET title = ?, raw_json = ? WHERE id = ? AND (title = '' OR title IS NULL)", e.Title, e.RawJSON, e.ID); err != nil {
+			log.Printf("warn: backfill title for event %d: %v", e.ID, err)
+		}
+	}
 	return n > 0, nil
+}
+
+// HasEventTitle reports whether the given event ID exists with a non-empty title.
+func (s *Store) HasEventTitle(id int64) bool {
+	var title string
+	err := s.db.QueryRow("SELECT title FROM events WHERE id = ? AND title != ''", id).Scan(&title)
+	return err == nil
 }
 
 // UpsertChatMessage inserts a chat message, ignoring duplicates by ID.

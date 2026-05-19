@@ -266,28 +266,42 @@ func (cmd *checkCmd) Execute(args []string) error {
 		}
 	}
 
-	// Fetch calendar events (last 30 days)
+	// Fetch calendar events (last 30 days), fetch detail only for new/titleless
 	since := cutoff.UTC().Format(time.RFC3339)
 	calEvents, err := client.GetCalendarEvents(since)
 	if err != nil {
 		log.Printf("warn: calendar events: %v", err)
 	} else {
 		for _, e := range calEvents {
+			eventID := api.SelfID(e.Links)
+			title := e.Title
+
+			// Skip detail fetch if we already have a title for this event
+			if title == "" && store.HasEventTitle(eventID) {
+				continue
+			}
+
+			// Fetch full detail to get calendarItem.title
+			if title == "" {
+				detail, err := client.GetCalendarEventDetail(eventID)
+				if err != nil {
+					log.Printf("warn: calendar detail %d: %v", eventID, err)
+				} else {
+					title = detail.CalendarItem.Title
+				}
+			}
+
 			raw, _ := json.Marshal(e)
-			inserted, err := store.UpsertEvent(db.Event{
-				ID:       api.SelfID(e.Links),
+			if _, err := store.UpsertEvent(db.Event{
+				ID:       eventID,
 				DType:    e.DType,
-				Title:    e.Title,
+				Title:    title,
 				Contents: "",
 				SortDate: e.SortDate,
 				GroupID:  0,
 				RawJSON:  string(raw),
-			})
-			if err != nil {
+			}); err != nil {
 				log.Printf("warn: upsert calendar event: %v", err)
-			}
-			if !inserted && !firstRun {
-				break
 			}
 		}
 	}
