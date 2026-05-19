@@ -311,6 +311,60 @@ func TestResetCache(t *testing.T) {
 	}
 }
 
+func TestGetEventsSince(t *testing.T) {
+	store, err := Open(":memory:", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	store.UpsertEvent(Event{ID: 1, DType: "event.RAnnouncementEventPrimer", Title: "Old", SortDate: "2026-03-01T10:00:00+01:00", RawJSON: "{}"})
+	store.UpsertEvent(Event{ID: 2, DType: "event.RAnnouncementEventPrimer", Title: "New", SortDate: "2026-03-03T10:00:00+01:00", RawJSON: "{}"})
+
+	// Should find only the newer event
+	events, err := store.GetEventsSince("2026-03-02T00:00:00+01:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].Title != "New" {
+		t.Fatalf("got title %q, want New", events[0].Title)
+	}
+
+	// Should find both
+	events, err = store.GetEventsSince("2026-03-01T00:00:00+01:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+}
+
+func TestGetChatMessagesSince(t *testing.T) {
+	store, err := Open(":memory:", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	store.UpsertChatMessage(ChatMessage{ID: 1, ChatroomID: 10, ChatroomName: "Room", SenderName: "Alice", Contents: "old", SentAt: "2026-03-01T10:00:00+01:00", RawJSON: "{}"})
+	store.UpsertChatMessage(ChatMessage{ID: 2, ChatroomID: 10, ChatroomName: "Room", SenderName: "Bob", Contents: "new", SentAt: "2026-03-03T10:00:00+01:00", RawJSON: "{}"})
+
+	msgs, err := store.GetChatMessagesSince("2026-03-02T00:00:00+01:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d msgs, want 1", len(msgs))
+	}
+	if msgs[0].SenderName != "Bob" {
+		t.Fatalf("got sender %q, want Bob", msgs[0].SenderName)
+	}
+}
+
 func TestGetLatestEmpty(t *testing.T) {
 	store, err := Open(":memory:", nil)
 	if err != nil {
