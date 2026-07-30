@@ -1,26 +1,24 @@
 package api
 
 import (
-	"net/url"
 	"testing"
 )
 
-func TestPasswordEncoding(t *testing.T) {
+func TestLoginFormData(t *testing.T) {
+	const email = "01AB-v-j.de_Vries"
 	pw := "*Xx$ab12Y%!ZZ9Q"
-	t.Logf("raw password: %q", pw)
-	t.Logf("raw bytes: %x", pw)
-	v := url.Values{
-		"aanmelden":   {"x"},
-		"e-mailadres": {"01AB-v-j.de_Vries"},
-		"wachtwoord":  {pw},
-	}
-	encoded := v.Encode()
-	t.Logf("encoded form: %s", encoded)
+	form := loginFormData(email, pw)
 
-	// Verify url.Values encodes special characters correctly
-	expected := "aanmelden=x&e-mailadres=01AB-v-j.de_Vries&wachtwoord=%2AXx%24ab12Y%25%21ZZ9Q"
-	if encoded != expected {
-		t.Logf("expected:     %s", expected)
-		t.Logf("NOTE: difference may be ok if server decodes both correctly")
+	if got := form.Get("emailadres"); got != email {
+		t.Fatalf("emailadres = %q, want %q", got, email)
+	}
+	if _, ok := form["e-mailadres"]; ok {
+		t.Fatal("login form must not submit the obsolete e-mailadres field")
+	}
+	if got := form.Get("wachtwoord"); got != pw {
+		t.Fatalf("wachtwoord = %q, want original password", got)
+	}
+	if got := form.Get("aanmelden"); got != "x" {
+		t.Fatalf("aanmelden = %q, want x", got)
 	}
 }
