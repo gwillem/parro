@@ -89,11 +89,7 @@ func Login(email, password string, logger *log.Logger) (*TokenResponse, error) {
 
 	// Step 3: POST credentials
 	logf("step 3: POST credentials to %s", formURL)
-	formData := url.Values{
-		"aanmelden":   {"x"},
-		"e-mailadres": {email},
-		"wachtwoord":  {password},
-	}
+	formData := loginFormData(email, password)
 	req, err := http.NewRequest(http.MethodPost, formURL, strings.NewReader(formData.Encode()))
 	if err != nil {
 		return nil, err
@@ -177,6 +173,14 @@ func Login(email, password string, logger *log.Logger) (*TokenResponse, error) {
 		return nil, fmt.Errorf("decode token: %w", err)
 	}
 	return &tok, nil
+}
+
+func loginFormData(email, password string) url.Values {
+	return url.Values{
+		"aanmelden":  {"x"},
+		"emailadres": {email},
+		"wachtwoord": {password},
+	}
 }
 
 // selectAccountAndGetCode performs the Wicket-based account-selection flow
